@@ -51,6 +51,8 @@ from swebench.harness.modal_eval import (
     run_instances_modal,
     validate_modal_credentials,
 )
+from swebench.harness.apptainer_eval import run_instances_apptainer
+from swebench.harness.runtime_checks import validate_apptainer_runtime_config
 from swebench.harness.test_spec.test_spec import make_test_spec, TestSpec
 from swebench.harness.utils import (
     EvaluationError,
@@ -486,6 +488,7 @@ def main(
     namespace: str | None,
     rewrite_reports: bool,
     modal: bool,
+    runtime: str = "docker",
     instance_image_tag: str = "latest",
     env_image_tag: str = "latest",
     report_dir: str = ".",
@@ -528,6 +531,52 @@ def main(
             validate_modal_credentials()
             run_instances_modal(predictions, dataset, full_dataset, run_id, timeout)
         return
+
+    if runtime == "apptainer":
+        test_specs = list(
+            map(
+                lambda instance: make_test_spec(
+                    instance,
+                    namespace=namespace,
+                    instance_image_tag=instance_image_tag,
+                    env_image_tag=env_image_tag,
+                ),
+                dataset,
+            )
+        )
+        validate_apptainer_runtime_config(
+            namespace=namespace,
+            force_rebuild=force_rebuild,
+            cache_level=cache_level,
+            clean=clean,
+            test_specs=test_specs,
+        )
+        if platform.system() == "Linux":
+            resource.setrlimit(resource.RLIMIT_NOFILE, (open_file_limit, open_file_limit))
+
+        if not dataset:
+            print("No instances to run.")
+        else:
+            run_instances_apptainer(
+                predictions=predictions,
+                instances=dataset,
+                max_workers=max_workers,
+                run_id=run_id,
+                timeout=timeout,
+                namespace=namespace,
+                instance_image_tag=instance_image_tag,
+                env_image_tag=env_image_tag,
+                rewrite_reports=rewrite_reports,
+            )
+        return make_run_report(
+            predictions,
+            full_dataset,
+            run_id,
+            None,
+            namespace,
+            instance_image_tag,
+            env_image_tag,
+        )
 
     # run instances locally
     if platform.system() == "Linux":
@@ -607,6 +656,14 @@ if __name__ == "__main__":
         type=str,
         help="Path to predictions file - if 'gold', uses gold predictions",
         required=True,
+    )
+
+    parser.add_argument(
+        "--runtime",
+        type=str,
+        choices=["docker", "apptainer"],
+        default="docker",
+        help="Container runtime for local evaluation.",
     )
 
     # Local execution args
